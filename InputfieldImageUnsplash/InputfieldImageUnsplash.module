@@ -1,0 +1,169 @@
+<?php
+namespace ProcessWire;
+function getRandomFourDigitNumber() {
+    return rand(1000, 9999);
+}
+class InputfieldImageUnsplash extends InputfieldImage implements ConfigurableModule {
+
+    public static function getModuleInfo() {
+        return array(
+            'title' => 'Image Unsplash – For repeater matrix',
+            'version' => 100,
+            'icon' => 'picture-o',
+            'author' => 'Mats Neander',
+            'summary' => 'Adds possibility to search and download free to use images from Unsplash on repeater matrix field',
+            'autoload' => 'template=admin',
+            'requires' => 'ProcessWire>=3.0.0'
+        );
+    }
+
+    public $maxFiles;
+    public $uploadedFiles;
+
+    public function ready() {
+        $this->addHookAfter('InputfieldImage::render', $this, 'modifyInputfield');
+        $this->addHookBefore('ProcessPageEdit::execute', $this, 'addDependencies');
+        $this->addHookBefore('ProcessPageEdit::processInput', $this, 'processInput');
+    }
+
+    protected function modifyInputfield(HookEvent $event) {
+        $inputfield = $event->object;
+        $out = $event->return;
+
+        $page = $inputfield->hasPage;
+        $field = $inputfield->hasField;
+
+        $idNr = getRandomFourDigitNumber();
+
+
+        $maximumFiles = $this->maxFiles == 0 ? 'data-maxfiles="999"' : 'data-maxfiles="' . $this->maxFiles . '"';
+
+        $out .= '<hr /><fieldset id="splashAndGrab'.$idNr.'" data-idnr="'.$idNr.'" data-uploadedfiles="' . $this->uploadedFiles . '" ' . $maximumFiles . '  class="splashAndGrab'.$idNr.' unsplash" data-id="' . $page->id . '" data-name="' . $field->name . '">';
+        $out .= '<div uk-grid class="uk-flex-bottom">';
+        $out .= '<div>';
+        $out .= '<label for="unsplashMagic" class="uk-form-label">' . __("Search Unsplash") . '';
+        $out .= '<input type="text" id="unsplashMagic'.$idNr.'" class="unsplashSearch"/></label>';
+        $out .= '</div>';
+        $out .= '<div>';
+        $out .= '<button type="button" class="unsplashButton ui-button uk-button ui-widget ui-corner-all ui-state-default" ><span class="ui-button-text">' . __("Search") . '</span></button>';
+        $out .= '</div>';
+        $out .= '</div>';
+        $out .= '<div class="unsplashChosen"></div><div class="unsplashResults'.$idNr.'"><div class="resultsItems'.$idNr.'"></div></div></fieldset>';
+        $event->return = $out;
+    }
+
+    protected function addDependencies(HookEvent $event) {
+        if ($this->config->ajax) return;
+        $this->wire('modules')->get('InputfieldImage');
+
+        $config = $this->config;
+        $info = $this->getModuleInfo();
+        $version = getRandomFourDigitNumber();
+        $config->scripts->add($config->urls->{$this} . "{$this}.js?v={$version}");
+        $config->styles->add($config->urls->{$this} . "{$this}.css?v={$version}");
+
+        $this->config->js('InputfieldImageUnsplash', array(
+            'i18n' => array(
+                'noHits' => __("Sorry. No hits for your query."),
+                'totalhitsstring' => __("Hits"),
+                'numberOfSelects' => __("Selected images"),
+                'orientaions' => __("All orientations"),
+                'colors' => __("All colors"),
+                'portrait' => __("Portrait"),
+                'landscape' => __("Landscape"),
+                'squarish' => __("Squarish"),
+                'latest' => __("Latest"),
+                'relevant' => __("Relevant"),
+                'black_and_white' => __("Black and White"),
+                'black' => __("Black"),
+                'white' => __("White"),
+                'yellow' => __("Yellow"),
+                'orange' => __("Orange"),
+                'red' => __("Red"),
+                'purple' => __("Purple"),
+                'magenta' => __("Magenta"),
+                'green' => __("Green"),
+                'teal' => __("Tealish"),
+                'blue' => __("Blue"),
+                'of' => __("of"),
+                'title_numoffiles' => __("The number of files you can select based on how many images you can upload and that are uploaded to this image field."),
+                'photo_by' => __("Photo by"),
+            ),
+            'settings' => array(
+                'maxWidth' => $this->sizeField
+            )
+        ));
+    }
+    protected function processInput(HookEvent $event) {
+        $form = $event->arguments(0);
+        if ($form->name !== 'ProcessPageEdit') {
+            return;
+        }
+    
+        foreach ($this->input->post as $key => $value) {
+            if (substr($key, 0, 8) !== 'unsplash' || empty($value)) {
+                continue;
+            }
+    
+            list($junk, $field_name, $page_id, $morejunk) = explode('*', $key);
+            $field_name = $this->sanitizer->fieldName($field_name);
+            $page = $this->pages->get((int) $page_id);
+            $field = $this->fields->get($field_name);
+            $field_value = $page->getUnformatted($field_name);
+    
+            $page->of(false);
+    
+            foreach ($value as $keytwo => $val) {
+                $img = explode("*", $val);
+                if ($field->maxFiles == 1 && count($field_value)) {
+                    $field_value->removeAll();
+                }
+    
+                $pagefile = new Pageimage($field_value, $img[0]);
+                $pagefile->rename($pagefile . ".jpg");
+                $field_value->add($pagefile);
+                $image = $field_value->last();
+                $image->description = $img[1];
+                $page->set($field_name, $field_value); // Set the value for the current field
+            }
+    
+            $page->save();
+        }
+    }
+    
+
+    public function getModuleConfigInputfields(array $data) {
+        $modules = $this->wire('modules');
+        $inputfields = new InputfieldWrapper();
+
+        $fieldImage = $modules->get("InputfieldAsmSelect");
+        $fieldImage->name = "useField";
+        $fieldImage->label = __("Image fields that should use the module.");
+        $fieldImage->description = __("Choose the fields which should use the module.");
+        foreach ($this->getImagefields() as $img) {
+            $fieldImage->addOption($img);
+        }
+        $fieldImage->value = $data['useField'];
+        $inputfields->add($fieldImage);
+
+        $fieldSize = $modules->get("InputfieldInteger");
+        $fieldSize->name = "sizeField";
+        $fieldSize->label = __("Maximum allowed width in pixels for images uploaded from Unsplash");
+        $fieldSize->value = $data["sizeField"];
+        $inputfields->add($fieldSize);
+
+        return $inputfields;
+    }
+
+    public static function getImagefields() {
+        $imgFields = wire('fields');
+        $imgFieldsOut = [];
+        foreach ($imgFields as $imgField) {
+            if ($imgField->type != "FieldtypeImage") {
+                continue;
+            }
+            $imgFieldsOut[] = $imgField->name;
+        }
+        return $imgFieldsOut;
+    }
+}
